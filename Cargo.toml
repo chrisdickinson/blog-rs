@@ -1,0 +1,17 @@
+[package]
+name = "blogrs"
+version = "0.1.0"
+authors = ["Chris Dickinson <christopher.s.dickinson@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+tide = "0.1"
+http = "0.1"
+
+[dependencies.futures]
+version = "0.3.0-alpha.14"
+package = "futures-preview"
+
+[patch.crates-io]
+http-service = { git = 'https://github.com/prasannavl/http-service' }
+
