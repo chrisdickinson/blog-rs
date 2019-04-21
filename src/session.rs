@@ -48,16 +48,24 @@ impl<
             // generated, I want to be able to look at the session object to
             // check whether it's been modified (or otherwise marked "dirty".)
             //
-            // The goal is that only once a session is marked dirty, we do the
-            // work of storing the session data in a backing store. Further, we
-            // only do the work of sending "Set-Cookie" if we don't already have
-            // a session (or if later handlers specifically request it.)
+            // The goal is that only once a session is marked dirty, do we do
+            // the work of storing the session data in a backing store.
+            //
+            // Further, we only do the work of sending "Set-Cookie" if we don't
+            // already have a session (or if later handlers specifically
+            // request it.)
             //
             // The problem is:
             //
             // `Context` is consumed by `next.run(ctx)`, so I can't get back to
             // its extensions (& by extension, the `SessionMap`) in the response
             // phase. I have a false start committed here, at (A) below.
+            //
+            // I'm going to keep noodling on this, but if you've got an answer
+            // I'd really appreciate your thoughts. It'd be most expedient to
+            // open an issue here:
+            //
+            // https://github.com/chrisdickinson/blog-rs/issues/new
             ctx.extensions_mut().insert(session);
             let mut res = await!(next.run(ctx));
 
