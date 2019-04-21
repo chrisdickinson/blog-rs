@@ -10,10 +10,7 @@ pub struct SessionMap {
 }
 
 impl SessionMap {
-    fn dirty(&self) -> bool {
-        // TODO: track changes to the internal map, and if any
-        // keys have been added/removed/modified, mark the map
-        // as dirty.
+    fn is_dirty(&self) -> bool {
         false
     }
 }
@@ -45,17 +42,38 @@ impl<
                 self.store.create_session()
             };
 
+            // XXX: I have a problem. To frame it: I want to provide the
+            // session map to later middleware & handlers by attaching it to
+            // the `Context`'s `Extensions`. However, **after** a response is
+            // generated, I want to be able to look at the session object to
+            // check whether it's been modified (or otherwise marked "dirty".)
+            //
+            // The goal is that only once a session is marked dirty, we do the
+            // work of storing the session data in a backing store. Further, we
+            // only do the work of sending "Set-Cookie" if we don't already have
+            // a session (or if later handlers specifically request it.)
+            //
+            // The problem is:
+            //
+            // `Context` is consumed by `next.run(ctx)`, so I can't get back to
+            // its extensions (& by extension, the `SessionMap`) in the response
+            // phase. I have a false start committed here, at (A) below.
             ctx.extensions_mut().insert(session);
             let mut res = await!(next.run(ctx));
 
+            // A) This won't work because `res.extensions` are not the same as
+            // `ctx.extensions`.
             if let Some(session) = res.extensions_mut().remove::<SessionMap>() {
-                if !session.dirty() {
+                if !session.is_dirty() {
                     return res
                 }
 
                 if let Ok(key) = self.store.commit(session) {
-                    let mut hm = res.headers_mut();
-                    hm.insert("Set-Cookie", key);
+                    // TODO: handle manually rotated cookies, like during login/logoff.
+                    if !has_session {
+                        let mut hm = res.headers_mut();
+                        hm.insert("Set-Cookie", key);
+                    }
                 }
             }
 
