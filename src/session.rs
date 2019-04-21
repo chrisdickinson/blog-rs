@@ -4,7 +4,7 @@ use tide::{ Context, Response };
 use futures::future::FutureObj;
 use http::header::{ HeaderValue, HeaderMap };
 
-struct SessionMap {
+pub struct SessionMap {
     // TODO: keep an internal hashmap of keys -> values for the
     // purpose of tracking changes.
 }
@@ -18,15 +18,15 @@ impl SessionMap {
     }
 }
 
-trait SessionStore {
+pub trait SessionStore {
     fn load_session(&self, key: &str) -> SessionMap;
     fn create_session(&self) -> SessionMap;
     fn commit(&self, session: SessionMap) -> Result<HeaderValue, std::io::Error>;
 }
 
-struct SessionMiddleware<Store: SessionStore + Send + Sync> {
-    session_key: String,
-    store: Store
+pub struct SessionMiddleware<Store: SessionStore + Send + Sync> {
+    pub session_key: String,
+    pub store: Store
 }
 
 impl<
