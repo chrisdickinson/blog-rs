@@ -4,6 +4,10 @@ struct XClacks;
 use tide::middleware::{ Middleware, Next };
 use tide::{ Context, Response };
 use std::net::SocketAddr;
+use std::env;
+use dotenv;
+
+mod session;
 
 use http::{
     header::{HeaderValue, IntoHeaderName},
@@ -29,9 +33,22 @@ impl<Data: Clone + Send + Sync + 'static> Middleware<Data> for XClacks {
 fn main() {
     let mut app = tide::App::new(());
     app.middleware(XClacks {});
+    dotenv::dotenv().ok();
 
     app.at("/").get(async move |_| "Hello, world!");
 
-    let addr: SocketAddr = "0.0.0.0:8125".parse().unwrap();
+    let host = env::var("HOST")
+        .as_ref()
+        .map(String::as_str)
+        .unwrap_or("0.0.0.0")
+        .to_string();
+
+    let port = env::var("PORT")
+        .as_ref()
+        .map(String::as_str)
+        .unwrap_or("8125")
+        .to_string();
+
+    let addr: SocketAddr = format!("{}:{}", host, port).parse().unwrap();
     app.serve(addr);
 }

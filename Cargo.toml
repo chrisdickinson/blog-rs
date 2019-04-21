@@ -7,6 +7,7 @@ edition = "2018"
 [dependencies]
 tide = "0.1"
 http = "0.1"
+dotenv = "0.13.0"
 
 [dependencies.futures]
 version = "0.3.0-alpha.14"
