@@ -2,28 +2,96 @@ use tide::middleware::{ Middleware, Next };
 use tide::cookies::ExtractCookies;
 use tide::{ Context, Response };
 use futures::future::FutureObj;
+use std::collections::HashMap;
 use http::header::{ HeaderValue, HeaderMap };
+use std::cell::{ RefCell, Ref, RefMut };
+use std::ops::{ Deref, DerefMut };
+use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct SessionMap {
-    // TODO: keep an internal hashmap of keys -> values for the
-    // purpose of tracking changes.
+    is_dirty: bool,
+    data: HashMap<String, String> // XXX: this could be made more generic / better!
 }
 
+// Provide associated functions a la Box or Arc, so we can
+// Deref directly to the internal HashMap.
 impl SessionMap {
-    fn is_dirty(&self) -> bool {
-        false
+    fn dirty(target: &Ref<Box<Self>>) -> bool {
+        target.is_dirty
+    }
+
+    pub fn rotate(target: &mut Self) {
+        target.is_dirty = true
+    }
+
+    pub fn new() -> Self {
+        Self {
+            is_dirty: false,
+            data: HashMap::new()
+        }
+    }
+}
+
+impl Deref for SessionMap {
+    type Target = HashMap<String, String>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl DerefMut for SessionMap {
+    // XXX: A tweet linked to this line in master earlier. If you're
+    // coming in from that link, the original comment is preserved
+    // at this URL: https://github.com/chrisdickinson/blog-rs/blob/6dfbe91a4fa09714ce6a975e4663e3e1efdaf9fa/src/session.rs#L45
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
     }
 }
 
 pub trait SessionStore {
     fn load_session(&self, key: &str) -> SessionMap;
-    fn create_session(&self) -> SessionMap;
-    fn commit(&self, session: SessionMap) -> Result<HeaderValue, std::io::Error>;
+    fn create_session(&self) -> SessionMap {
+        SessionMap::new()
+    }
+    fn commit(&self, session: Ref<Box<SessionMap>>) -> Result<HeaderValue, std::io::Error>;
 }
 
 pub struct SessionMiddleware<Store: SessionStore + Send + Sync> {
     pub session_key: String,
     pub store: Store
+}
+
+#[derive(Clone)]
+pub struct SessionCell(RefCell<Box<SessionMap>>);
+
+// We're copying actix, here. I need to understand this better, because
+// this strikes me as dangerous.
+#[doc(hidden)]
+unsafe impl Send for SessionCell {}
+#[doc(hidden)]
+unsafe impl Sync for SessionCell {}
+
+// If a handler needs access to the session (mutably or immutably) it can
+// import this trait.
+pub trait SessionExt {
+    fn session(&self) -> Ref<Box<SessionMap>>;
+    fn session_mut(&self) -> RefMut<Box<SessionMap>>;
+}
+
+impl<
+    Data: Clone + Send + Sync + 'static
+> SessionExt for Context<Data> {
+    fn session(&self) -> Ref<Box<SessionMap>> {
+        let session_cell = self.extensions().get::<Arc<SessionCell>>().unwrap();
+        session_cell.0.borrow()
+    }
+
+    fn session_mut(&self) -> RefMut<Box<SessionMap>> {
+        let session_cell = self.extensions().get::<Arc<SessionCell>>().unwrap();
+        session_cell.0.borrow_mut()
+    }
 }
 
 impl<
@@ -42,46 +110,27 @@ impl<
                 self.store.create_session()
             };
 
-            // XXX: I have a problem. To frame it: I want to provide the
-            // session map to later middleware & handlers by attaching it to
-            // the `Context`'s `Extensions`. However, **after** a response is
-            // generated, I want to be able to look at the session object to
-            // check whether it's been modified (or otherwise marked "dirty".)
-            //
-            // The goal is that only once a session is marked dirty, do we do
-            // the work of storing the session data in a backing store.
-            //
-            // Further, we only do the work of sending "Set-Cookie" if we don't
-            // already have a session (or if later handlers specifically
-            // request it.)
-            //
-            // The problem is:
-            //
-            // `Context` is consumed by `next.run(ctx)`, so I can't get back to
-            // its extensions (& by extension, the `SessionMap`) in the response
-            // phase. I have a false start committed here, at (A) below.
-            //
-            // I'm going to keep noodling on this, but if you've got an answer
-            // I'd really appreciate your thoughts. It'd be most expedient to
-            // open an issue here:
-            //
-            // https://github.com/chrisdickinson/blog-rs/issues/new
-            ctx.extensions_mut().insert(session);
+            // Create a ref-counted cell (yay interior mutability.) Attach
+            // a clone of that arc'd cell to the context and send it
+            // through. At the same time, keep our local copy of the arc
+            // ready for inspection after we're done processing the
+            // request. 
+            let cell = Arc::new(SessionCell(RefCell::new(Box::new(session))));
+            ctx.extensions_mut().insert(cell.clone());
             let mut res = await!(next.run(ctx));
 
-            // A) This won't work because `res.extensions` are not the same as
-            // `ctx.extensions`.
-            if let Some(session) = res.extensions_mut().remove::<SessionMap>() {
-                if !session.is_dirty() {
-                    return res
-                }
+            // Borrow the session map and check to see if we need to commit
+            // it and/or send a new cookie.
+            let session_cell = &cell.0;
+            let session = session_cell.borrow();
+            if !SessionMap::dirty(&session) {
+                return res
+            }
 
-                if let Ok(key) = self.store.commit(session) {
-                    // TODO: handle manually rotated cookies, like during login/logoff.
-                    if !has_session {
-                        let mut hm = res.headers_mut();
-                        hm.insert("Set-Cookie", key);
-                    }
+            if let Ok(key) = self.store.commit(session) {
+                if !has_session {
+                    let mut hm = res.headers_mut();
+                    hm.insert("Set-Cookie", key);
                 }
             }
 
