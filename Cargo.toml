@@ -12,7 +12,3 @@ dotenv = "0.13.0"
 [dependencies.futures]
 version = "0.3.0-alpha.14"
 package = "futures-preview"
-
-[patch.crates-io]
-http-service = { git = 'https://github.com/prasannavl/http-service' }
-
